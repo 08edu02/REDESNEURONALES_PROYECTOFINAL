@@ -54,51 +54,73 @@ def load_classification_model():
 # --- Funciones de Visualización (sin cambios) ---
 
 def plot_ecg_professional(signal_data, metadata):
+    """
+    Crea un gráfico de ECG de 12 derivaciones imitando el papel milimetrado estándar.
+    """
     fs = metadata['fs']
     time = np.arange(signal_data.shape[0]) / fs
+    
     fig, axs = plt.subplots(6, 2, figsize=(20, 25))
     axs = axs.flatten()
+    
     for i, lead_name in enumerate(metadata['sig_name']):
         ax = axs[i]
         signal = signal_data[:, i]
+        
+        # Configuración de la cuadrícula para simular papel de ECG
         major_ticks_x = np.arange(0, time[-1], 0.2)
         minor_ticks_x = np.arange(0, time[-1], 0.04)
         major_ticks_y = np.arange(int(np.min(signal)) - 1, int(np.max(signal)) + 1, 0.5)
         minor_ticks_y = np.arange(int(np.min(signal)) - 1, int(np.max(signal)) + 1, 0.1)
+        
         ax.set_xticks(major_ticks_x)
         ax.set_xticks(minor_ticks_x, minor=True)
         ax.set_yticks(major_ticks_y)
         ax.set_yticks(minor_ticks_y, minor=True)
+        
         ax.grid(which='major', linestyle='-', linewidth='0.7', color='red', alpha=0.5)
         ax.grid(which='minor', linestyle=':', linewidth='0.5', color='pink', alpha=0.7)
+        
         ax.plot(time, signal, color='black', linewidth=1.2)
         ax.set_title(f"Derivación: {lead_name}")
-        ax.set_xlim(0, 10)
+        ax.set_xlim(0, 10) # Los registros son de 10 segundos
+        
+        # Limpiar etiquetas para una mejor visualización
         if i % 2 != 0: ax.set_yticklabels([])
         if i < 10: ax.set_xticklabels([])
+
     fig.supxlabel("Tiempo (s)", fontsize=14)
     fig.supylabel("Voltaje (mV)", fontsize=14)
     plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+    
     return fig
 
 def plot_ecg_with_peaks(signal_data, metadata, rpeaks):
+    """
+    Grafica una derivación de ECG (usualmente la II) y marca los picos R detectados.
+    """
     fs = metadata['fs']
     time = np.arange(signal_data.shape[0]) / fs
+    
     try:
         lead_index = metadata['sig_name'].index('II')
         lead_name = 'II'
     except ValueError:
-        lead_index = 0
+        lead_index = 0 # Fallback a la primera derivación si no existe 'II'
         lead_name = metadata['sig_name'][0]
+        
     signal = signal_data[:, lead_index]
+    
     fig, ax = plt.subplots(figsize=(15, 5))
     ax.plot(time, signal, color='blue', label=f'Señal ECG (Derivación {lead_name})')
     ax.scatter(time[rpeaks], signal[rpeaks], color='red', s=80, marker='x', label='Picos R Detectados')
+    
     ax.set_title("Detección de Picos R para Análisis de Frecuencia Cardiaca", fontsize=16)
     ax.set_xlabel("Tiempo (s)")
     ax.set_ylabel("Voltaje (mV)")
     ax.legend()
     ax.grid(True, linestyle='--')
+    
     return fig
 
 # --- Barra Lateral (Sidebar) para Controles ---
@@ -109,18 +131,24 @@ record_path = st.sidebar.text_input(
 )
 st.sidebar.markdown("""
 **Ejemplos de registros locales:**
+- 010:
 - `data/WFDBRecords/01/010/JS00001`
 - `data/WFDBRecords/01/010/JS00002`
-- `data/WFDBRecords/01/010/JS00004`
+- `data/WFDBRecords/01/010/JS00021`
+- `data/WFDBRecords/01/010/JS00043`
+- `data/WFDBRecords/01/010/JS00077`
+- 020:          
+- `data/WFDBRecords/02/020/JS01053`
+- `data/WFDBRecords/02/020/JS01072`
+- `data/WFDBRecords/02/020/JS01111`
+- `data/WFDBRecords/02/020/JS01129`
+- `data/WFDBRecords/02/020/JS01156`
 """)
-st.sidebar.info("Asegúrese de que la estructura de carpetas y los archivos (.hea, .mat) existan.")
 
 # --- Cuerpo Principal de la Aplicación ---
-# La variable ahora se llama record_path
 record = load_record(record_path)
 
 if record:
-    # El resto del código funciona exactamente igual
     signal_mv = record.p_signal
     if record.units[0].lower() == 'uv':
         signal_mv = signal_mv / 1000.0
@@ -128,22 +156,37 @@ if record:
     with st.expander("Ver Metadatos del Registro", expanded=False):
         st.write(f"**Nombre del Registro:** {record.record_name}")
         st.write(f"**Frecuencia de Muestreo:** {record.fs} Hz")
-        # ... (resto de los metadatos)
+        st.write(f"**Duración de la Señal:** {record.sig_len / record.fs} segundos")
+        st.write(f"**Número de Derivaciones:** {record.n_sig}")
+        st.write(f"**Nombres de Derivaciones:** {', '.join(record.sig_name)}")
+        st.write(f"**Unidades:** {', '.join(record.units)}")
+        st.write("**Comentarios/Diagnóstico:**")
+        for comment in record.comments:
+            st.text(f"- {comment}")
 
     st.header("Objetivo 1: Visualización de ECG (12 Derivaciones)")
+    st.markdown("Gráfico de las 12 derivaciones de la señal de ECG, simulando el formato de papel electrocardiográfico estándar (25 mm/s, 10 mm/mV).")
     fig_professional = plot_ecg_professional(signal_mv, record.__dict__)
     st.pyplot(fig_professional)
 
     st.header("Objetivo 2: Análisis de Frecuencia Cardiaca")
+    st.markdown("Se utiliza la librería `neurokit2` para detectar los picos R en la derivación II y calcular la frecuencia cardiaca (FC). Se emite una alerta si la FC promedio está fuera del rango normal (60-100 lpm).")
+    
+    # Seleccionar la derivación II para el análisis
     try:
         lead_ii_index = record.sig_name.index('II')
     except ValueError:
+        st.warning("No se encontró la derivación 'II'. Usando la primera derivación para el análisis.")
         lead_ii_index = 0
+        
     ecg_signal_for_analysis = signal_mv[:, lead_ii_index]
+    
+    # Procesar la señal con NeuroKit2
     _, rpeaks = nk.ecg_peaks(ecg_signal_for_analysis, sampling_rate=record.fs)
     heart_rate = nk.ecg_rate(rpeaks, sampling_rate=record.fs, desired_length=len(ecg_signal_for_analysis))
     avg_heart_rate = np.mean(heart_rate)
     
+    # Mostrar resultados y alertas
     col1, col2 = st.columns(2)
     with col1:
         st.metric(label="Frecuencia Cardiaca Promedio", value=f"{avg_heart_rate:.2f} lpm")
@@ -151,12 +194,41 @@ if record:
             st.success("La frecuencia cardiaca está en el rango normal.")
         else:
             st.error("¡Alerta! La frecuencia cardiaca está fuera del rango normal.")
+    
     with col2:
         st.write("Visualización de Picos R:")
         fig_peaks = plot_ecg_with_peaks(signal_mv, record.__dict__, rpeaks['ECG_R_Peaks'])
         st.pyplot(fig_peaks)
 
     st.header("Objetivo 3 (Opcional): Clasificación de Arritmia con Red Neuronal")
-    # ... (el código del objetivo 3 no necesita cambios)
+    model = load_classification_model()
+    if model is None:
+        st.warning("""
+        **Funcionalidad no disponible.** Para activar la clasificación, debe entrenar un modelo de red neuronal
+        y guardarlo como `ecg_classifier.h5` en la misma carpeta que la aplicación.
+        """)
+    else:
+        class_names = ['Sinus Bradycardia', 'Sinus Rhythm', 'Atrial Fibrillation', 'Sinus Tachycardia']
+        if st.button("Clasificar Ritmo Cardiaco"):
+            with st.spinner("El modelo está analizando la señal..."):
+                # Preparar la señal para el modelo (usar la misma derivación y asegurar el tamaño correcto)
+                signal_to_classify = ecg_signal_for_analysis
+                
+                # El modelo espera una forma específica: (batch, timesteps, features)
+                signal_reshaped = np.expand_dims(signal_to_classify, axis=0)
+                signal_reshaped = np.expand_dims(signal_reshaped, axis=-1)
+                
+                # Realizar la predicción
+                prediction = model.predict(signal_reshaped)
+                predicted_class_index = np.argmax(prediction)
+                predicted_class_name = class_names[predicted_class_index]
+                confidence = np.max(prediction) * 100
+                
+                st.subheader(f"Resultado de la Clasificación: **{predicted_class_name}**")
+                st.write(f"Confianza del modelo: **{confidence:.2f}%**")
+                
+                # Mostrar probabilidades de todas las clases
+                probs_df = pd.DataFrame(prediction, columns=class_names, index=["Probabilidad"])
+                st.dataframe(probs_df.style.format("{:.2%}"))
 else:
     st.info("Esperando la entrada de una ruta de registro válida en la barra lateral.")
