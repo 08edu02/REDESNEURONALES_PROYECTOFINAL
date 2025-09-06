@@ -7,6 +7,8 @@ import wfdb
 import neurokit2 as nk
 from tensorflow.keras.models import load_model
 import os
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # --- Configuración de la Página ---
 st.set_page_config(
@@ -50,6 +52,53 @@ def load_classification_model():
         model = load_model(model_path)
         return model
     return None
+
+def plot_ecg_professional_plotly(signal_data, metadata):
+    fs = metadata['fs']
+    time = np.arange(signal_data.shape[0]) / fs
+    num_leads = len(metadata['sig_name'])
+    
+    # ✅ AUMENTAR ESPACIADO VERTICAL Y HORIZONTAL
+    fig = make_subplots(
+        rows=6, 
+        cols=2, 
+        subplot_titles=[f"Derivación: {name}" for name in metadata['sig_name']],
+        vertical_spacing=0.08,  # Aumentar espacio vertical entre filas
+        horizontal_spacing=0.1   # Aumentar espacio horizontal entre columnas
+    )
+    
+    for i, lead_name in enumerate(metadata['sig_name']):
+        row = i // 2 + 1
+        col = i % 2 + 1
+        signal = signal_data[:, i]
+        
+        fig.add_trace(
+            go.Scatter(x=time, y=signal, mode='lines', line=dict(color='black', width=1)),
+            row=row, col=col
+        )
+        
+        # Configuración estilo papel ECG
+        fig.update_xaxes(
+            showgrid=True, gridwidth=1, gridcolor='lightgray',
+            dtick=0.2, minor=dict(dtick=0.04, gridcolor='rgba(0,0,0,0.1)', showgrid=True),
+            row=row, col=col,
+            range=[0, 10]  # Limitar a 10 segundos
+        )
+        fig.update_yaxes(
+            showgrid=True, gridwidth=1, gridcolor='lightgray', 
+            dtick=0.5, minor=dict(dtick=0.1, gridcolor='rgba(0,0,0,0.1)', showgrid=True),
+            row=row, col=col
+        )
+    
+    # ✅ AUMENTAR ALTURA TOTAL y ajustar márgenes
+    fig.update_layout(
+        height=1500,  # Aumentar altura
+        showlegend=False,
+        title_text="ECG - 12 Derivaciones (Estilo Papel Electrocardiográfico)",
+        margin=dict(l=50, r=50, t=80, b=50),  # Márgenes ajustados
+    )
+    
+    return fig
 
 # --- Funciones de Visualización (sin cambios) ---
 
@@ -125,25 +174,30 @@ def plot_ecg_with_peaks(signal_data, metadata, rpeaks):
 
 # --- Barra Lateral (Sidebar) para Controles ---
 st.sidebar.header("Panel de Control")
-record_path = st.sidebar.text_input(
-    "Ingrese la ruta local del registro:",
-    "data/WFDBRecords/01/010/JS00001"
+
+# ✅ DEFINICIÓN DIRECTA DE REGISTROS
+registros = {
+    "01/010/JS00001": "data/WFDBRecords/01/010/JS00001",
+    "01/010/JS00002": "data/WFDBRecords/01/010/JS00002",
+    "01/010/JS00021": "data/WFDBRecords/01/010/JS00021",
+    "01/010/JS00043": "data/WFDBRecords/01/010/JS00043",
+    "01/010/JS00077": "data/WFDBRecords/01/010/JS00077",
+    "02/020/JS01053": "data/WFDBRecords/02/020/JS01053",
+    "02/020/JS01072": "data/WFDBRecords/02/020/JS01072",
+    "02/020/JS01111": "data/WFDBRecords/02/020/JS01111",
+    "02/020/JS01129": "data/WFDBRecords/02/020/JS01129",
+    "02/020/JS01156": "data/WFDBRecords/02/020/JS01156"
+}
+
+# ✅ SELECTBOX SIMPLE
+selected_key = st.sidebar.selectbox(
+    "📋 Seleccionar registro:",
+    options=list(registros.keys()),
+    index=0
 )
-st.sidebar.markdown("""
-**Ejemplos de registros locales:**
-- 010:
-- `data/WFDBRecords/01/010/JS00001`
-- `data/WFDBRecords/01/010/JS00002`
-- `data/WFDBRecords/01/010/JS00021`
-- `data/WFDBRecords/01/010/JS00043`
-- `data/WFDBRecords/01/010/JS00077`
-- 020:          
-- `data/WFDBRecords/02/020/JS01053`
-- `data/WFDBRecords/02/020/JS01072`
-- `data/WFDBRecords/02/020/JS01111`
-- `data/WFDBRecords/02/020/JS01129`
-- `data/WFDBRecords/02/020/JS01156`
-""")
+
+# ✅ ASIGNACIÓN AUTOMÁTICA
+record_path = registros[selected_key]
 
 # --- Cuerpo Principal de la Aplicación ---
 record = load_record(record_path)
@@ -166,8 +220,8 @@ if record:
 
     st.header("Objetivo 1: Visualización de ECG (12 Derivaciones)")
     st.markdown("Gráfico de las 12 derivaciones de la señal de ECG, simulando el formato de papel electrocardiográfico estándar (25 mm/s, 10 mm/mV).")
-    fig_professional = plot_ecg_professional(signal_mv, record.__dict__)
-    st.pyplot(fig_professional)
+    fig_professional = plot_ecg_professional_plotly(signal_mv, record.__dict__)
+    st.plotly_chart(fig_professional, use_container_width=True)
 
     st.header("Objetivo 2: Análisis de Frecuencia Cardiaca")
     st.markdown("Se utiliza la librería `neurokit2` para detectar los picos R en la derivación II y calcular la frecuencia cardiaca (FC). Se emite una alerta si la FC promedio está fuera del rango normal (60-100 lpm).")
