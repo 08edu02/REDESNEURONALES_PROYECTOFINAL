@@ -33,6 +33,12 @@ Esta aplicación permite visualizar señales de ECG de 12 derivaciones, analizar
 y clasificar el ritmo cardiaco utilizando un modelo de Deep Learning.
 """)
 
+
+st.info(
+    "**Fuente de Datos:** La base de datos de ECG y el archivo de definiciones de diagnóstico "
+    "fueron obtenidos de la [Base de Datos de Arritmias de ECG en PhysioNet](https://physionet.org/content/ecg-arrhythmia/1.0.0/)."
+)
+
 # --- Funciones de Carga y Procesamiento ---
 
 @st.cache_data
