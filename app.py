@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from streamlit import components
 
 # --- Configuración de la Página ---
 st.set_page_config(
@@ -194,41 +195,45 @@ def scroll_to_top():
     # para crear un botón de "volver arriba".
     
     # CSS para el estilo y posicionamiento del botón
-    button_style = """
+    button_code = """
         <style>
-            /* Establece el comportamiento de scroll suave para toda la página */
-            html {
-                scroll-behavior: smooth;
-            }
             /* Estilo del botón flotante */
             #scrollTopBtn {
-                position: fixed; /* Fijo en la pantalla */
-                bottom: 20px; /* Distancia desde abajo */
-                right: 20px; /* Distancia desde la derecha */
-                z-index: 999; /* Asegura que esté por encima de otros elementos */
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                z-index: 999;
                 border: none;
                 outline: none;
-                background-color: #007bff; /* Color de fondo azul */
-                color: white; /* Color del ícono */
+                background-color: #007bff;
+                color: white;
                 cursor: pointer;
                 padding: 15px;
-                border-radius: 50%; /* Forma circular */
+                border-radius: 50%;
                 font-size: 18px;
                 box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.2);
                 transition: background-color 0.3s, transform 0.3s;
             }
             #scrollTopBtn:hover {
-                background-color: #0056b3; /* Azul más oscuro al pasar el cursor */
-                transform: scale(1.1); /* Ligeramente más grande al pasar el cursor */
+                background-color: #0056b3;
+                transform: scale(1.1);
             }
         </style>
+        
+        <button onclick="scrollToTopFunction()" id="scrollTopBtn" title="Volver arriba">⬆️</button>
+        
+        <script>
+            function scrollToTopFunction() {
+                window.scrollTo({
+                    top: 0,
+                    behavior: 'smooth'
+                });
+            }
+        </script>
     """
     
-    # HTML para el botón. El href="#" es un ancla que apunta al inicio de la página.
-    button_html = '<a href="#" id="scrollTopBtn">⬆️</a>'
-    
-    # Combina el CSS y el HTML y lo muestra en la app
-    st.markdown(button_style + button_html, unsafe_allow_html=True)
+    # Usamos st.components.v1.html para asegurar una correcta ejecución del script
+    st.components.v1.html(button_code, height=0)
 
 # --- Barra Lateral (Sidebar) para Controles ---
 st.sidebar.header("Panel de Control")
