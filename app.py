@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 
 # --- Configuración de la Página ---
 st.set_page_config(
-    page_title="Análisis de ECG Local",
+    page_title="Análisis de ECG",
     page_icon="❤️",
     layout="wide"
 )
