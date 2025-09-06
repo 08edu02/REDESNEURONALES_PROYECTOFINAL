@@ -79,6 +79,25 @@ def find_local_records(root_dir="data/WFDBRecords"):
         
     return records_dict
 
+@st.cache_data
+def load_snomed_definitions(file_path="data/ConditionNames_SNOMED-CT.csv"):
+    """
+    Carga las definiciones de los códigos SNOMED CT desde el archivo CSV.
+    Retorna un diccionario para una búsqueda rápida de código -> definición.
+    """
+    try:
+        df = pd.read_csv(file_path)
+        
+        # 'Full Name' para las descripciones y 'Snomed_CT' para los códigos
+        return pd.Series(df['Full Name'].values, index=df['Snomed_CT']).to_dict()
+
+    except FileNotFoundError:
+        st.warning(f"El archivo de definiciones SNOMED '{file_path}' no fue encontrado. Las descripciones no estarán disponibles.")
+        return {}
+    except KeyError:
+        st.error(f"El archivo '{file_path}' no tiene las columnas esperadas ('Snomed_CT', 'Full Name'). No se pueden cargar las definiciones.")
+        return {}
+
 # --- Funciones de Visualización ---
 
 def plot_ecg_professional_plotly(signal_data, metadata):
@@ -86,7 +105,7 @@ def plot_ecg_professional_plotly(signal_data, metadata):
     time = np.arange(signal_data.shape[0]) / fs
     num_leads = len(metadata['sig_name'])
     
-    # ✅ AUMENTAR ESPACIADO VERTICAL Y HORIZONTAL
+    # AUMENTAR ESPACIADO VERTICAL Y HORIZONTAL
     fig = make_subplots(
         rows=6, 
         cols=2, 
@@ -166,6 +185,51 @@ def plot_ecg_with_peaks(signal_data, metadata, rpeaks):
     )
     return fig
 
+def scroll_to_top():
+    """
+    Añade un botón flotante en la esquina inferior derecha que, al hacer clic,
+    desplaza la página suavemente hacia arriba.
+    """
+    # Esta función inyecta código HTML y CSS en la aplicación de Streamlit
+    # para crear un botón de "volver arriba".
+    
+    # CSS para el estilo y posicionamiento del botón
+    button_style = """
+        <style>
+            /* Establece el comportamiento de scroll suave para toda la página */
+            html {
+                scroll-behavior: smooth;
+            }
+            /* Estilo del botón flotante */
+            #scrollTopBtn {
+                position: fixed; /* Fijo en la pantalla */
+                bottom: 20px; /* Distancia desde abajo */
+                right: 20px; /* Distancia desde la derecha */
+                z-index: 999; /* Asegura que esté por encima de otros elementos */
+                border: none;
+                outline: none;
+                background-color: #007bff; /* Color de fondo azul */
+                color: white; /* Color del ícono */
+                cursor: pointer;
+                padding: 15px;
+                border-radius: 50%; /* Forma circular */
+                font-size: 18px;
+                box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.2);
+                transition: background-color 0.3s, transform 0.3s;
+            }
+            #scrollTopBtn:hover {
+                background-color: #0056b3; /* Azul más oscuro al pasar el cursor */
+                transform: scale(1.1); /* Ligeramente más grande al pasar el cursor */
+            }
+        </style>
+    """
+    
+    # HTML para el botón. El href="#" es un ancla que apunta al inicio de la página.
+    button_html = '<a href="#" id="scrollTopBtn">⬆️</a>'
+    
+    # Combina el CSS y el HTML y lo muestra en la app
+    st.markdown(button_style + button_html, unsafe_allow_html=True)
+
 # --- Barra Lateral (Sidebar) para Controles ---
 st.sidebar.header("Panel de Control")
 
@@ -197,6 +261,9 @@ st.sidebar.markdown("""
 # --- Cuerpo Principal de la Aplicación ---
 record = load_record(record_path)
 
+# Carga las definiciones de SNOMED una sola vez
+snomed_definitions = load_snomed_definitions()
+
 if record:
     signal_mv = record.p_signal
     if record.units[0].lower() == 'uv':
@@ -211,7 +278,20 @@ if record:
         st.write(f"**Unidades:** {', '.join(record.units)}")
         st.write("**Comentarios/Diagnóstico:**")
         for comment in record.comments:
-            st.text(f"- {comment.replace('Unknown', 'Desconocido')}")
+            clean_comment = comment.replace('Unknown', 'Desconocido')
+            st.text(f"- {clean_comment}")
+
+            # Si la línea es un diagnóstico y tenemos definiciones cargadas...
+            if clean_comment.startswith('Dx:') and snomed_definitions:
+                # Extrae los códigos (ej. '426783006,251146004')
+                codes_str = clean_comment.split(':')[1].strip()
+                codes = [int(c.strip()) for c in codes_str.split(',')]
+                
+                # Muestra cada código con su definición
+                for code in codes:
+                    # .get() es una forma segura de buscar, devuelve un texto por defecto si no encuentra el código
+                    definition = snomed_definitions.get(code, "Definición no encontrada en el archivo local.")
+                    st.markdown(f"  - **`{code}`**: *{definition}*")
 
         st.info("""
         **Glosario de Términos:**
@@ -249,13 +329,19 @@ if record:
 
     col1, col2 = st.columns([1, 2]) # Dar más espacio al gráfico
 
+    help_text_picos_r = """
+    Los picos R son los puntos más altos del complejo QRS en un ECG. 
+    Representan la contracción de los ventrículos (las cámaras principales del corazón). 
+    La frecuencia cardiaca se calcula midiendo el tiempo entre picos R consecutivos.
+    """
+
     if len(r_peaks_indices) > 0:
         # Si hay picos, calcula la FC y muestra la métrica y la alerta
         heart_rate = nk.ecg_rate(r_peaks_indices, sampling_rate=record.fs, desired_length=len(ecg_signal_for_analysis))
         avg_heart_rate = np.mean(heart_rate)
     
         with col1:
-            st.metric(label="Frecuencia Cardiaca Promedio", value=f"{avg_heart_rate:.2f} lpm")
+            st.metric(label="Frecuencia Cardiaca Promedio", value=f"{avg_heart_rate:.2f} lpm", help=help_text_picos_r)
             if 60 <= avg_heart_rate <= 100:
                 st.success("La frecuencia cardiaca está en el rango normal.")
             else:
@@ -263,7 +349,7 @@ if record:
     else:
         # Si no hay picos, muestra la advertencia
         with col1:
-            st.metric(label="Frecuencia Cardiaca Promedio", value="N/A")
+            st.metric(label="Frecuencia Cardiaca Promedio", value="N/A", help=help_text_picos_r)
             st.warning("No se pudieron detectar picos R en esta señal.")
 
     # Mostramos el gráfico en cualquier caso
@@ -299,3 +385,5 @@ if record:
                 st.dataframe(probs_df.style.format("{:.2%}"))
 else:
     st.info("Por favor, seleccione un registro válido en la barra lateral.")
+
+scroll_to_top()
