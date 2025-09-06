@@ -6,3 +6,4 @@ wfdb
 neurokit2
 scikit-learn
 tensorflow
+plotly
