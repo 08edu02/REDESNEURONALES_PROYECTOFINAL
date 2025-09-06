@@ -19,6 +19,8 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout
 from tensorflow.keras.utils import to_categorical
 
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+
 # --- Configuración de la Página ---
 st.set_page_config(
     page_title="Análisis de ECG",
@@ -30,7 +32,7 @@ st.set_page_config(
 st.title("Análisis y Visualización de Electrocardiogramas (ECG)")
 st.markdown("""
 Esta aplicación permite visualizar señales de ECG de 12 derivaciones, analizar la frecuencia cardiaca 
-y clasificar el ritmo cardiaco utilizando un modelo de Deep Learning.
+y clasificar el ritmo cardiaco utilizando un modelo de IA entrenado.
 """)
 
 
@@ -56,14 +58,33 @@ def load_record(record_path):
 
 @st.cache_resource
 def load_classification_model():
-    """
-    Carga el modelo de clasificación de Keras pre-entrenado.
-    """
-    model_path = 'ecg_classifier.h5'
-    if os.path.exists(model_path):
-        model = load_model(model_path)
-        return model
-    return None
+    """Carga el modelo de clasificación pre-entrenado y el label encoder."""
+    model_path = 'data/ecg_classifier_heart_rate.h5'
+    encoder_path = 'data/label_encoder_classes.npy'
+    
+    if os.path.exists(model_path) and os.path.exists(encoder_path):
+        try:
+            # Cargar modelo
+            model = load_model(model_path)
+            
+            # Cargar label encoder
+            label_encoder_classes = np.load(encoder_path, allow_pickle=True)
+            label_encoder = LabelEncoder()
+            label_encoder.classes_ = label_encoder_classes
+            
+            st.sidebar.success("✅ Modelo de clasificación cargado exitosamente")
+            return model, label_encoder
+            
+        except Exception as e:
+            st.sidebar.error(f"Error cargando el modelo: {e}")
+            return None, None
+    else:
+        st.sidebar.warning("""
+        ⚠️ Modelo no encontrado. Asegúrate de que existan:
+        - 'ecg_classifier_heart_rate.h5'
+        - 'label_encoder_classes.npy'
+        """)
+        return None, None
 
 # Función para encontrar registros dinámicamente
 @st.cache_data
@@ -93,6 +114,57 @@ def find_local_records(root_dir="data/WFDBRecords"):
         records_dict[display_name] = file_path_without_ext
         
     return records_dict
+
+def predict_with_heart_rate_model(frecuencia_cardiaca, rango_cardiaco, model, label_encoder):
+    """Realiza predicción usando frecuencia cardiaca y rango."""
+    try:
+        # Codificar rango cardíaco
+        rango_encoded = 1 if rango_cardiaco == "Dentro" else 0
+        
+        # Preparar features
+        features = np.array([[frecuencia_cardiaca, rango_encoded]])
+        
+        # Escalar features (usar mismo escalado del entrenamiento)
+        features_scaled = (features - np.array([75.0, 0.5])) / np.array([20.0, 0.5])
+        
+        # Predecir
+        prediction = model.predict(features_scaled, verbose=0)
+        predicted_class = np.argmax(prediction)
+        predicted_rhythm = label_encoder.inverse_transform([predicted_class])[0]
+        confidence = prediction[0][predicted_class]
+        
+        return predicted_rhythm, confidence, prediction[0]
+        
+    except Exception as e:
+        st.error(f"Error en la predicción: {e}")
+        return None, None, None
+    
+def plot_classification_results(prediction_probs, class_names):
+    """Grafica los resultados de la clasificación."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    
+    # Gráfico de barras (usar las class_names que vienen del label encoder)
+    colors = ['red', 'green', 'blue', 'orange', 'purple']
+    bars = ax1.bar(class_names, prediction_probs * 100, color=colors[:len(class_names)])
+    
+    ax1.set_ylabel('Probabilidad (%)')
+    ax1.set_title('Probabilidades de Clasificación')
+    ax1.set_ylim(0, 100)
+    ax1.tick_params(axis='x', rotation=45)
+    
+    # Añadir valores en las barras
+    for bar, prob in zip(bars, prediction_probs):
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height + 2,
+                f'{prob*100:.1f}%', ha='center', va='bottom')
+    
+    # Gráfico de pie
+    ax2.pie(prediction_probs * 100, labels=class_names, autopct='%1.1f%%',
+           colors=['red', 'green', 'blue', 'orange'])
+    ax2.set_title('Distribución de Probabilidades')
+    
+    plt.tight_layout()
+    return fig
 
 @st.cache_data
 def load_snomed_definitions(file_path="data/ConditionNames_SNOMED-CT.csv"):
@@ -152,7 +224,7 @@ def plot_ecg_professional_plotly(signal_data, metadata):
             row=row, col=col
         )
     
-    # ✅ AUMENTAR ALTURA TOTAL y ajustar márgenes
+    # AUMENTAR ALTURA TOTAL y ajustar márgenes
     fig.update_layout(
         height=1500,  # Aumentar altura
         showlegend=False,
@@ -295,6 +367,9 @@ st.sidebar.markdown("""
 """)
 
 
+# Cargar modelo una vez al inicio
+model, label_encoder = load_classification_model()
+
 # --- Cuerpo Principal de la Aplicación ---
 record = load_record(record_path)
 
@@ -381,8 +456,10 @@ if record:
             st.metric(label="Frecuencia Cardiaca Promedio", value=f"{avg_heart_rate:.2f} lpm", help=help_text_picos_r)
             if 60 <= avg_heart_rate <= 100:
                 st.success("La frecuencia cardiaca está en el rango normal.")
+                rango_cardiaco = "Dentro"
             else:
                 st.error("¡Alerta! La frecuencia cardiaca está fuera del rango normal.")
+                rango_cardiaco = "Fuera"
     else:
         # Si no hay picos, muestra la advertencia
         with col1:
@@ -395,32 +472,27 @@ if record:
         fig_peaks = plot_ecg_with_peaks(signal_mv, record.__dict__, r_peaks_indices)
         st.plotly_chart(fig_peaks, use_container_width=True)
 
-    st.header("Objetivo 3: Clasificación de Arritmia con Red Neuronal")
-    # Preprocesar señal para el modelo
-    processed_signal = preprocess_signal_for_model(ecg_signal_for_analysis)
+    st.header("Objetivo 3: Clasificación de Arritmia con Red Neuronal")    
+
+    if model and label_encoder:
+        if st.button("Clasificar Ritmo Cardiaco", type="primary"):
+            with st.spinner("El modelo está analizando..."):
+                # Realizar predicción
+                predicted_rhythm, confidence, prediction_probs = predict_with_heart_rate_model(
+                    avg_heart_rate, rango_cardiaco, model, label_encoder
+                )
+                if predicted_rhythm is not None:
+                    # Mostrar resultado principal
+                    st.success(f"**Resultado: {predicted_rhythm}**")
+                    st.metric("Confianza del modelo", f"{confidence*100:.1f}%")
+                    
+                    # Mostrar gráficos
+                    class_names = list(label_encoder.classes_)
+                    fig_results = plot_classification_results(prediction_probs, class_names)
+                    st.pyplot(fig_results)
     
-    # Simulación de modelo
-    if st.button("Ejecutar Clasificación"):
-        with st.spinner("La red neuronal está analizando..."):
-            class_names = ['Sinus Bradycardia', 'Sinus Rhythm', 'Atrial Fibrillation', 'Sinus Tachycardia']
-            
-            if avg_heart_rate < 60:
-                probs = [0.85, 0.10, 0.03, 0.02]  # Mayor probabilidad para SB
-            elif avg_heart_rate > 100:
-                probs = [0.05, 0.10, 0.05, 0.80]  # Mayor probabilidad para ST
-            else:
-                probs = [0.10, 0.75, 0.10, 0.05]  # Mayor probabilidad para SR
-            
-            predicted_class = np.argmax(probs)
-            
-            # Mostrar resultados
-            st.success(f"**Predicción: {class_names[predicted_class]}**")
-            st.metric("Confianza del modelo", f"{max(probs)*100:.1f}%")
-            
-            # Mostrar probabilidades
-            st.subheader("Probabilidades por Clase:")
-            for i, (cls, prob) in enumerate(zip(class_names, probs)):
-                st.write(f"- **{cls}**: {prob*100:.1f}%")
+                else:
+                    st.error("No se pudo realizar la predicción. Verifica los datos de entrada.")
 else:
     st.info("Por favor, seleccione un registro válido en la barra lateral.")
 
